@@ -7,8 +7,26 @@ import urllib.request
 from datetime import datetime
 
 TABLE_NAME = os.environ.get("TABLE_NAME")
+LOG_BUCKET = os.environ.get("LOG_BUCKET")
+
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
+s3 = boto3.client("s3")
+
+def write_log(action, details):
+    """Записує лог операції у S3"""
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "action": action,
+        "details": details
+    }
+    key = f"logs/{datetime.now().strftime('%Y/%m/%d')}/{uuid.uuid4()}.json"
+    s3.put_object(
+        Bucket=LOG_BUCKET,
+        Key=key,
+        Body=json.dumps(log_entry, ensure_ascii=False),
+        ContentType="application/json"
+    )
 
 def check_url_reachable(url):
     """Перевіряє доступність URL HEAD-запитом (★ бонусна логіка)"""
@@ -25,8 +43,8 @@ def handler(event, context):
 
         if http_method == "POST":
             body = json.loads(event.get("body") or "{}")
-            url   = body.get("url", "")
-            tags  = body.get("tags", [])   # список міток, наприклад ["cloud","aws"]
+            url  = body.get("url", "")
+            tags = body.get("tags", [])
 
             if not url:
                 return {
@@ -48,16 +66,27 @@ def handler(event, context):
             }
             table.put_item(Item=item)
 
+            # Лог у S3
+            write_log("POST /links", {
+                "item_id":   item_id,
+                "url":       url,
+                "tags":      tags,
+                "reachable": reachable
+            })
+
             return {
                 "statusCode": 201,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"id": item_id, "url": url,
-                                    "reachable": reachable, "tags": tags})
+                "body": json.dumps({
+                    "id":        item_id,
+                    "url":       url,
+                    "reachable": reachable,
+                    "tags":      tags
+                })
             }
 
         elif http_method == "GET":
-            # GET /links?tag=cloud  — фільтрація за міткою
-            params    = event.get("queryStringParameters") or {}
+            params     = event.get("queryStringParameters") or {}
             tag_filter = params.get("tag")
 
             response = table.scan()
@@ -65,6 +94,12 @@ def handler(event, context):
 
             if tag_filter:
                 items = [i for i in items if tag_filter in i.get("tags", [])]
+
+            # Лог у S3
+            write_log("GET /links", {
+                "tag_filter":    tag_filter,
+                "results_count": len(items)
+            })
 
             return {
                 "statusCode": 200,
@@ -80,6 +115,11 @@ def handler(event, context):
 
     except Exception as e:
         print(f"Error: {str(e)}")
+        # Спроба залогувати помилку у S3
+        try:
+            write_log("ERROR", {"error": str(e)})
+        except Exception:
+            pass
         return {
             "statusCode": 500,
             "body": json.dumps({"message": "Internal Server Error"})
