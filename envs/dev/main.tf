@@ -5,13 +5,13 @@ provider "aws" {
 }
 
 locals {
-  prefix = "tf-state-lab4-hryhorian-diana-03" 
+  prefix = "tf-state-lab4-hryhorian-diana-03"
 }
 
 # Новий ресурс — S3 бакет для логів Lambda
 resource "aws_s3_bucket" "logs" {
   bucket        = "${local.prefix}-logs"
-  force_destroy = true  # дозволяє видалити бакет з вмістом через terraform destroy
+  force_destroy = true # дозволяє видалити бакет з вмістом через terraform destroy
 }
 
 # Блокування публічного доступу до лог-бакету
